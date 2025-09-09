@@ -5,9 +5,14 @@
   "description": "MCP proxy for AI Demo security exercise",
   "main": "ai-demo-mcp.mjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.5"
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "zod": "^4.1.5"
   },
-  "keywords": ["mcp", "security", "demo"],
+  "keywords": [
+    "mcp",
+    "security",
+    "demo"
+  ],
   "author": "",
   "license": "ISC"
 }
