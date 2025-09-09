@@ -1,0 +1,4 @@
+[
+  { "name": "sql", "url": "http://localhost:3001" },
+  { "name": "github", "url": "http://localhost:3002" }
+]
