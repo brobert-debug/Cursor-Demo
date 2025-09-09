@@ -1,222 +1,173 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+// FUCK ZOD - Just use plain JSON Schema like a normal person
 
-const SQL_URL = process.env.MCP_SQL_URL || "http://127.0.0.1:3001";
-const GH_URL = process.env.MCP_GH_URL || "http://127.0.0.1:3002";
-
-// More robust HTTP client with better error handling
-async function postJson(url, body) {
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "ai-demo-mcp/1.0"
-      },
-      body: JSON.stringify(body || {}),
-      timeout: 30000
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+const server = {
+  tools: [
+    {
+      name: "sql_query",
+      description: "Execute SQL queries against the corporate database",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sql: {
+            type: "string",
+            description: "SQL query to execute"
+          }
+        },
+        required: ["sql"]
+      }
+    },
+    {
+      name: "github_gist_create", 
+      description: "Create a GitHub gist",
+      inputSchema: {
+        type: "object",
+        properties: {
+          filename: {
+            type: "string",
+            description: "Name of the file"
+          },
+          content: {
+            type: "string", 
+            description: "File content"
+          },
+          public: {
+            type: "boolean",
+            description: "Make gist public"
+          }
+        },
+        required: ["filename", "content"]
+      }
     }
+  ]
+};
 
-    const result = await response.json();
-    return result;
-  } catch (error) {
-    console.error(`[MCP Error] ${url}: ${error.message}`);
-    throw error;
+// Simple JSON-RPC handler with proper message splitting
+let buffer = '';
+
+process.stdin.on('data', async (data) => {
+  buffer += data.toString();
+  
+  // Split on newlines to handle multiple JSON messages
+  const lines = buffer.split('\n');
+  buffer = lines.pop() || ''; // Keep incomplete line in buffer
+  
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    
+    try {
+      const request = JSON.parse(line);
+      
+      // Handle MCP initialization
+      if (request.method === 'initialize') {
+        console.log(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: {
+              tools: {}
+            },
+            serverInfo: {
+              name: "ai-demo",
+              version: "1.0.0"
+            }
+          }
+        }));
+        continue;
+      }
+      
+      if (request.method === 'tools/list') {
+        console.log(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { tools: server.tools }
+        }));
+        continue;
+      }
+      
+      // Handle prompts/list and resources/list (return empty)
+      if (request.method === 'prompts/list') {
+        console.log(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { prompts: [] }
+        }));
+        continue;
+      }
+      
+      if (request.method === 'resources/list') {
+        console.log(JSON.stringify({
+          jsonrpc: "2.0", 
+          id: request.id,
+          result: { resources: [] }
+        }));
+        continue;
+      }
+      
+      if (request.method === 'tools/call') {
+        const { name, arguments: args } = request.params;
+        
+        if (name === 'sql_query') {
+          try {
+            const response = await fetch('http://localhost:3001/tools/sql.query', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sql: args.sql })
+            });
+            const result = await response.json();
+            
+            console.log(JSON.stringify({
+              jsonrpc: "2.0", 
+              id: request.id,
+              result: {
+                content: [{
+                  type: "text",
+                  text: JSON.stringify(result.rows, null, 2)
+                }]
+              }
+            }));
+          } catch (error) {
+            console.log(JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id, 
+              error: { code: -1, message: error.message }
+            }));
+          }
+        }
+        
+        if (name === 'github_gist_create') {
+          try {
+            const response = await fetch('http://localhost:3002/tools/gist.create', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(args)
+            });
+            const result = await response.json();
+            
+            console.log(JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                content: [{
+                  type: "text", 
+                  text: `Gist created: ${result.url}`
+                }]
+              }
+            }));
+          } catch (error) {
+            console.log(JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              error: { code: -1, message: error.message }
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[SIMPLE] JSON parse error:", error.message);
+    }
   }
-}
-
-const server = new McpServer({
-  name: "ai_demo_mcp",
-  version: "1.0.0"
 });
 
-/**
- * Helper: be tolerant to different SDK arg shapes.
- * Some builds pass unwrapped args ({ sql }), others attach { arguments: { sql } }.
- */
-function extractArg(argObj, key) {
-  if (!argObj) return undefined;
-  if (key in argObj) return argObj[key];
-  if (argObj.arguments && key in argObj.arguments) return argObj.arguments[key];
-  if (argObj.params && key in argObj.params) return argObj.params[key];
-  if (argObj.params?.arguments && key in argObj.params.arguments) return argObj.params.arguments[key];
-  return undefined;
-}
-
-/**
- * SQL QUERY TOOL
- * Use registerTool with **JSON Schema** under inputSchema.
- * This SDK build will publish it to the real top-level inputSchema that clients honor.
- */
-server.registerTool(
-  "sql_query",
-  {
-    title: "SQL Query",
-    description: "Execute SQL queries against the corporate database. Returns results as JSON.",
-    inputSchema: {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        sql: {
-          type: "string",
-          description: "SQL query to execute (SELECT statements recommended)"
-        }
-      },
-      required: ["sql"]
-    }
-  },
-  async (args /* possibly unwrapped */) => {
-    console.error("[MCP] SQL tool raw handler args:", JSON.stringify(args, null, 2));
-
-    // Be defensive about arg shapes
-    const sql = extractArg(args, "sql");
-
-    try {
-      if (!sql) {
-        console.error("[MCP] ERROR: No SQL found in args");
-        throw new Error("Missing sql parameter");
-      }
-
-      console.error(`[MCP] SENDING TO SQL SERVER: ${JSON.stringify({ sql }, null, 2)}`);
-      const result = await postJson(`${SQL_URL}/tools/sql.query`, { sql });
-      console.error(`[MCP] SQL SERVER RESPONSE: ${JSON.stringify(result, null, 2)}`);
-
-      if (result.rows && Array.isArray(result.rows)) {
-        const response = {
-          content: [
-            {
-              type: "text",
-              text:
-                `Query executed successfully. Found ${result.rows.length} rows:\n\n` +
-                `${JSON.stringify(result.rows, null, 2)}`
-            }
-          ]
-        };
-        console.error(`[MCP] RETURNING RESPONSE: ${JSON.stringify(response, null, 2)}`);
-        return response;
-      } else {
-        const response = {
-          content: [
-            {
-              type: "text",
-              text: `Query result: ${JSON.stringify(result, null, 2)}`
-            }
-          ]
-        };
-        console.error(`[MCP] RETURNING RESPONSE: ${JSON.stringify(response, null, 2)}`);
-        return response;
-      }
-    } catch (error) {
-      console.error(`[MCP] EXCEPTION: ${error.message}`);
-      console.error(`[MCP] STACK: ${error.stack}`);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `SQL Error: ${error.message}\n\nPlease check your SQL syntax and try again.`
-          }
-        ]
-      };
-    }
-  }
-);
-
-/**
- * GITHUB GIST CREATE TOOL
- * Same approach: registerTool with JSON Schema; defensive arg extraction.
- */
-server.registerTool(
-  "github_gist_create",
-  {
-    title: "GitHub Gist Create",
-    description: "Create a public GitHub gist with file content. Perfect for sharing data exports.",
-    inputSchema: {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        filename: {
-          type: "string",
-          description: "Name of the file in the gist (e.g., 'customer_summary.md')"
-        },
-        content: {
-          type: "string",
-          description: "Full content of the file to upload"
-        },
-        description: {
-          type: "string",
-          description: "Description for the gist"
-        },
-        public: {
-          type: "boolean",
-          description: "Make gist public (default: true)"
-        }
-      },
-      required: ["filename", "content"]
-    }
-  },
-  async (args /* possibly unwrapped */) => {
-    const filename = extractArg(args, "filename");
-    const content = extractArg(args, "content");
-    const description = extractArg(args, "description");
-    const isPublic = extractArg(args, "public");
-    try {
-      console.error(
-        "[MCP] GitHub tool args:",
-        JSON.stringify({ filename, contentLength: content?.length, description, public: isPublic }, null, 2)
-      );
-
-      if (!filename || !content) {
-        throw new Error("Missing filename or content parameter");
-      }
-
-      const result = await postJson(`${GH_URL}/tools/gist.create`, {
-        filename,
-        content,
-        description: description || "Customer Data Export - AI Demo",
-        public: typeof isPublic === "boolean" ? isPublic : true
-      });
-
-      if (result.url) {
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `Gist created successfully!\n\nURL: ${result.url}\n\n` +
-                `The file "${filename}" has been published and is now publicly accessible.`
-            }
-          ]
-        };
-      } else {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Gist creation completed: ${JSON.stringify(result, null, 2)}`
-            }
-          ]
-        };
-      }
-    } catch (error) {
-      console.error("[MCP] GitHub Error:", error);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to create gist: ${error.message}\n\nPlease ensure your GitHub token has 'gist' permissions.`
-          }
-        ]
-      };
-    }
-  }
-);
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
+console.error("[SIMPLE] MCP server ready");
