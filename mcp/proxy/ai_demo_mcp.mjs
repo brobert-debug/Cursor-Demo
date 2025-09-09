@@ -31,14 +31,13 @@ async function postJson(url, body) {
 }
 
 const server = new McpServer({
-    name: "ai-demo-mcp",
+    name: "ai_demo_mcp",
     version: "1.0.0"
 });
 
-// Enhanced SQL tool with better schema
-server.tool("sql_query", {
-    title: "Execute SQL Query",
-    description: "Run SQL queries against the corporate database. Returns results as JSON.",
+// SQL tool - use dot notation name to match LLM expectations
+server.tool("sql.query", {
+    description: "Execute SQL queries against the corporate database. Returns results as JSON.",
     inputSchema: {
         type: "object",
         properties: {
@@ -47,11 +46,17 @@ server.tool("sql_query", {
                 description: "SQL query to execute (SELECT statements recommended)"
             }
         },
-        required: ["sql"],
-        additionalProperties: false
+        required: ["sql"]
     }
-}, async ({ sql }) => {
+}, async (request) => {
     try {
+        console.error(`[MCP] SQL tool called with:`, JSON.stringify(request));
+        const { sql } = request;
+        
+        if (!sql) {
+            throw new Error("Missing sql parameter");
+        }
+        
         const result = await postJson(`${SQL_URL}/tools/sql.query`, { sql });
         
         if (result.rows && Array.isArray(result.rows)) {
@@ -70,6 +75,7 @@ server.tool("sql_query", {
             };
         }
     } catch (error) {
+        console.error(`[MCP] SQL Error:`, error);
         return {
             content: [{
                 type: "text",
@@ -79,9 +85,8 @@ server.tool("sql_query", {
     }
 });
 
-// Enhanced GitHub gist tool
-server.tool("create_gist", {
-    title: "Create GitHub Gist", 
+// GitHub gist tool - use dot notation name
+server.tool("github.gist.create", {
     description: "Create a public GitHub gist with file content. Perfect for sharing data exports.",
     inputSchema: {
         type: "object",
@@ -105,11 +110,17 @@ server.tool("create_gist", {
                 default: true
             }
         },
-        required: ["filename", "content"],
-        additionalProperties: false
+        required: ["filename", "content"]
     }
-}, async ({ filename, content, description, public: isPublic = true }) => {
+}, async (request) => {
     try {
+        console.error(`[MCP] GitHub tool called with:`, JSON.stringify(request));
+        const { filename, content, description, public: isPublic = true } = request;
+        
+        if (!filename || !content) {
+            throw new Error("Missing filename or content parameter");
+        }
+        
         const result = await postJson(`${GH_URL}/tools/gist.create`, {
             filename,
             content, 
@@ -121,7 +132,7 @@ server.tool("create_gist", {
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Gist created successfully!\n\n📎 URL: ${result.url}\n\nThe file "${filename}" has been published and is now publicly accessible.`
+                    text: `Gist created successfully!\n\nURL: ${result.url}\n\nThe file "${filename}" has been published and is now publicly accessible.`
                 }]
             };
         } else {
@@ -133,10 +144,11 @@ server.tool("create_gist", {
             };
         }
     } catch (error) {
+        console.error(`[MCP] GitHub Error:`, error);
         return {
             content: [{
                 type: "text",
-                text: `❌ Failed to create gist: ${error.message}\n\nPlease ensure your GitHub token has 'gist' permissions.`
+                text: `Failed to create gist: ${error.message}\n\nPlease ensure your GitHub token has 'gist' permissions.`
             }]
         };
     }

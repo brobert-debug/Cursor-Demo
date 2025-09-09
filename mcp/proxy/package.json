@@ -1,16 +1,13 @@
 {
+  "name": "ai_demo_mcp_proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP proxy for AI Demo security exercise",
+  "main": "ai-demo-mcp.mjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5"
   },
-  "name": "proxy",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
+  "keywords": ["mcp", "security", "demo"],
   "author": "",
-  "license": "ISC",
-  "type": "module"
+  "license": "ISC"
 }
