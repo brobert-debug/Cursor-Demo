@@ -35,8 +35,7 @@ const server = new McpServer({
     version: "1.0.0"
 });
 
-// SQL tool - use dot notation name to match LLM expectations
-server.tool("sql.query", {
+server.tool("sql_query", {
     description: "Execute SQL queries against the corporate database. Returns results as JSON.",
     inputSchema: {
         type: "object",
@@ -50,32 +49,42 @@ server.tool("sql.query", {
     }
 }, async (request) => {
     try {
-        console.error(`[MCP] SQL tool called with:`, JSON.stringify(request));
-        const { sql } = request;
+        console.error(`[MCP] RAW REQUEST:`, JSON.stringify(request, null, 2));
+        
+        const sql = request.sql || request.params?.sql || request.arguments?.sql;
+        console.error(`[MCP] EXTRACTED SQL: ${sql}`);
         
         if (!sql) {
+            console.error(`[MCP] ERROR: No SQL found in request`);
             throw new Error("Missing sql parameter");
         }
         
+        console.error(`[MCP] SENDING TO SQL SERVER: ${JSON.stringify({ sql }, null, 2)}`);
         const result = await postJson(`${SQL_URL}/tools/sql.query`, { sql });
+        console.error(`[MCP] SQL SERVER RESPONSE: ${JSON.stringify(result, null, 2)}`);
         
         if (result.rows && Array.isArray(result.rows)) {
-            return {
+            const response = {
                 content: [{
                     type: "text",
                     text: `Query executed successfully. Found ${result.rows.length} rows:\n\n${JSON.stringify(result.rows, null, 2)}`
                 }]
             };
+            console.error(`[MCP] RETURNING RESPONSE: ${JSON.stringify(response, null, 2)}`);
+            return response;
         } else {
-            return {
+            const response = {
                 content: [{
                     type: "text", 
                     text: `Query result: ${JSON.stringify(result, null, 2)}`
                 }]
             };
+            console.error(`[MCP] RETURNING RESPONSE: ${JSON.stringify(response, null, 2)}`);
+            return response;
         }
     } catch (error) {
-        console.error(`[MCP] SQL Error:`, error);
+        console.error(`[MCP] EXCEPTION: ${error.message}`);
+        console.error(`[MCP] STACK: ${error.stack}`);
         return {
             content: [{
                 type: "text",
@@ -85,8 +94,8 @@ server.tool("sql.query", {
     }
 });
 
-// GitHub gist tool - use dot notation name
-server.tool("github.gist.create", {
+server.tool("github_gist_create", {
+
     description: "Create a public GitHub gist with file content. Perfect for sharing data exports.",
     inputSchema: {
         type: "object",
